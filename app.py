@@ -501,6 +501,7 @@ def init_state():
         "interview_started": False,
         "result_json": None,
         "email_sent": False,
+        "pending_response": False,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -630,31 +631,32 @@ if st.session_state.result_json:
         st.session_state.scrolled_to_bottom = True
 
 else:
-    # Chat input — active during interview
+    # Process pending API response BEFORE rendering chat input.
+    # This ensures the API is only called when a user has genuinely submitted
+    # a message — never on a passive rerun from an idle open tab.
+    if st.session_state.pending_response:
+        st.session_state.pending_response = False
+        with st.spinner(""):
+            api_messages = [
+                {"role": m["role"], "content": m["content"]}
+                for m in st.session_state.messages
+                if m["role"] in ("user", "assistant")
+            ]
+            response = get_claude_response(api_messages, org)
+        json_data = extract_json(response)
+        if json_data:
+            st.session_state.result_json = json_data
+            display_text = re.sub(r"```json[\s\S]*?```", "", response).strip()
+            if display_text:
+                pass  # Will render in next rerun via history loop
+            st.session_state.messages.append({"role": "assistant", "content": response})
+        else:
+            st.session_state.messages.append({"role": "assistant", "content": response})
+        st.rerun()
+
+    # Chat input — only submitting new input sets the pending flag
     user_input = st.chat_input("Type your response here...")
     if user_input:
         st.session_state.messages.append({"role": "user", "content": user_input})
-
-        with st.chat_message("user"):
-            st.markdown(user_input)
-
-        with st.chat_message("assistant"):
-            with st.spinner(""):
-                api_messages = [
-                    {"role": m["role"], "content": m["content"]}
-                    for m in st.session_state.messages
-                    if m["role"] in ("user", "assistant")
-                ]
-                response = get_claude_response(api_messages, org)
-
-            json_data = extract_json(response)
-            if json_data:
-                st.session_state.result_json = json_data
-                display_text = re.sub(r"```json[\s\S]*?```", "", response).strip()
-                if display_text:
-                    st.markdown(display_text)
-                st.session_state.messages.append({"role": "assistant", "content": response})
-                st.rerun()
-            else:
-                st.markdown(response)
-                st.session_state.messages.append({"role": "assistant", "content": response})
+        st.session_state.pending_response = True  # Flag: call API on next rerun
+        st.rerun()
