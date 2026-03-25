@@ -520,12 +520,18 @@ st.markdown(f"""
 # Start interview with Claude's opening message if not yet started
 if not st.session_state.interview_started:
     with st.spinner("Starting your assessment..."):
-        opening = get_claude_response([], org)
+        # Anthropic API requires at least one message — use a hidden trigger
+        trigger = [{"role": "user", "content": "__BEGIN__"}]
+        opening = get_claude_response(trigger, org)
+        # Store the trigger + opening so conversation history is coherent
+        st.session_state.messages.append({"role": "user", "content": "__BEGIN__"})
         st.session_state.messages.append({"role": "assistant", "content": opening})
         st.session_state.interview_started = True
 
 # Render conversation history
 for msg in st.session_state.messages:
+    if msg["content"] == "__BEGIN__":
+        continue  # Never show the hidden trigger message
     if msg["role"] == "assistant":
         json_data = extract_json(msg["content"])
         if json_data and st.session_state.result_json is None:
