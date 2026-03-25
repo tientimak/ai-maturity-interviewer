@@ -522,7 +522,8 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # Start interview with Claude's opening message if not yet started
-if not st.session_state.interview_started:
+# Double-guard: check both flag AND messages list to prevent re-firing on reruns
+if not st.session_state.interview_started and not st.session_state.messages:
     with st.spinner("Starting your assessment..."):
         # Anthropic API requires at least one message — use a hidden trigger
         trigger = [{"role": "user", "content": "__BEGIN__"}]
@@ -531,6 +532,7 @@ if not st.session_state.interview_started:
         st.session_state.messages.append({"role": "user", "content": "__BEGIN__"})
         st.session_state.messages.append({"role": "assistant", "content": opening})
         st.session_state.interview_started = True
+        st.rerun()
 
 # Render conversation history
 for msg in st.session_state.messages:
@@ -608,15 +610,17 @@ if st.session_state.result_json:
 
     st.markdown(f"**Overall maturity score: {overall} / 4.0**")
 
-    # Auto-scroll to bottom so participant sees the completion panel
-    import streamlit.components.v1 as components
-    components.html("""
-    <script>
-        var el = window.parent.document.querySelector('section[data-testid="stMain"]');
-        if (!el) el = window.parent.document.querySelector('.main');
-        if (el) el.scrollTop = el.scrollHeight;
-    </script>
-    """, height=0)
+    # Auto-scroll to bottom — only fire once, not on every rerun
+    if not st.session_state.get("scrolled_to_bottom"):
+        import streamlit.components.v1 as components
+        components.html("""
+        <script>
+            var el = window.parent.document.querySelector('section[data-testid="stMain"]');
+            if (!el) el = window.parent.document.querySelector('.main');
+            if (el) el.scrollTop = el.scrollHeight;
+        </script>
+        """, height=0)
+        st.session_state.scrolled_to_bottom = True
 
 else:
     # Chat input — active during interview
