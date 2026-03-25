@@ -21,6 +21,10 @@ st.set_page_config(
 # ── Styling ────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
+    /* Hide Streamlit toolbar */
+    #MainMenu, footer, header { visibility: hidden; }
+    [data-testid="stToolbar"] { visibility: hidden; }
+
     /* Clean, professional look */
     .main .block-container { max-width: 760px; padding-top: 2rem; }
 
