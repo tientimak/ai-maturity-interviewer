@@ -14,6 +14,10 @@ st.set_page_config(
     layout="centered",
 )
 
+# ── Read org name from URL parameter ──────────────────────────────────────────
+# Usage: share links in the form  https://yourapp.streamlit.app/?org=Acme+Corp
+# If no ?org= param is present, show a clear error rather than a broken interview.
+
 # ── Styling ────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
@@ -458,12 +462,30 @@ def format_results_email(data: dict) -> str:
     return "\n".join(lines)
 
 
+# ── Guard: org name must be present ───────────────────────────────────────────
+# Links must include ?org=Organisation+Name
+# If missing, show a friendly error rather than a broken interview.
+params = st.query_params
+ORG_NAME = params.get("org", "").strip()
+
+if not ORG_NAME:
+    st.markdown("""
+    <div class="assessment-header">
+        <h1>🧠 AI Maturity Assessment</h1>
+        <p>Confidential · powered by AI</p>
+    </div>
+    """, unsafe_allow_html=True)
+    st.error(
+        "This link appears to be incomplete. "
+        "Please contact Tien-Ti for the correct assessment link for your organisation.",
+        icon="🔗",
+    )
+    st.stop()
+
 # ── Session state initialisation ──────────────────────────────────────────────
 def init_state():
     defaults = {
-        "stage": "setup",          # setup | interview | complete
-        "org_name": "",
-        "messages": [],            # list of {role, content}
+        "messages": [],
         "interview_started": False,
         "result_json": None,
         "email_sent": False,
@@ -475,195 +497,122 @@ def init_state():
 
 init_state()
 
-# ── STAGE: SETUP ──────────────────────────────────────────────────────────────
-if st.session_state.stage == "setup":
+# ── INTERVIEW ─────────────────────────────────────────────────────────────────
+org = ORG_NAME
 
-    st.markdown("""
-    <div class="assessment-header">
-        <h1>🧠 AI Maturity Assessment</h1>
-        <p>A confidential, conversational assessment — powered by AI</p>
-    </div>
-    """, unsafe_allow_html=True)
+# Header — shown throughout the interview
+st.markdown(f"""
+<div class="assessment-header">
+    <h1>🧠 AI Maturity Assessment</h1>
+    <p>Confidential conversation · approx. 15–20 minutes</p>
+    <div class="org-badge">📋 {org}</div>
+</div>
+""", unsafe_allow_html=True)
 
-    st.markdown("""
-    <div class="confidentiality-notice">
-        🔒 <strong>Confidential.</strong> Your responses are used only in aggregate analysis by Tien-Ti. 
-        Individual responses are never shared without your permission.
-    </div>
-    """, unsafe_allow_html=True)
+# Start interview with Claude's opening message if not yet started
+if not st.session_state.interview_started:
+    with st.spinner("Starting your assessment..."):
+        opening = get_claude_response([], org)
+        st.session_state.messages.append({"role": "assistant", "content": opening})
+        st.session_state.interview_started = True
 
-    with st.container():
-        st.markdown("#### Before we begin")
-        st.markdown(
-            "Please enter the name of your organisation. This ensures your responses "
-            "are correctly attributed in the analysis."
-        )
-
-        org_input = st.text_input(
-            "Organisation name",
-            placeholder="e.g. Acme Corp",
-            help="Enter the full name of your organisation as you'd like it to appear in the report.",
-        )
-
-        st.markdown("&nbsp;")
-
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            start_btn = st.button(
-                "Begin Assessment →",
-                type="primary",
-                use_container_width=True,
-                disabled=(not org_input.strip()),
-            )
-
-        if start_btn and org_input.strip():
-            st.session_state.org_name = org_input.strip()
-            st.session_state.stage = "interview"
-            st.rerun()
-
-    st.markdown("---")
-    st.markdown(
-        "<p style='text-align:center; color:#999; font-size:0.8rem;'>"
-        "This assessment takes approximately 15–20 minutes. "
-        "There are no right or wrong answers.</p>",
-        unsafe_allow_html=True,
-    )
-
-# ── STAGE: INTERVIEW ──────────────────────────────────────────────────────────
-elif st.session_state.stage == "interview":
-
-    org = st.session_state.org_name
-
-    # Header
-    st.markdown(f"""
-    <div class="assessment-header">
-        <h1>🧠 AI Maturity Assessment</h1>
-        <p>Confidential conversation · approx. 15–20 minutes</p>
-        <div class="org-badge">📋 {org}</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # Start interview with Claude's opening message if not yet started
-    if not st.session_state.interview_started:
-        with st.spinner("Starting your assessment..."):
-            opening = get_claude_response([], org)
-            st.session_state.messages.append({"role": "assistant", "content": opening})
-            st.session_state.interview_started = True
-
-    # Render conversation history
-    for msg in st.session_state.messages:
-        if msg["role"] == "assistant":
-            # Check if this message contains the final JSON — if so, split display
-            json_data = extract_json(msg["content"])
-            if json_data and st.session_state.result_json is None:
-                st.session_state.result_json = json_data
-                # Show only the text before the JSON block
-                display_text = re.sub(r"```json[\s\S]*?```", "", msg["content"]).strip()
-                if display_text:
-                    with st.chat_message("assistant"):
-                        st.markdown(display_text)
-            else:
+# Render conversation history
+for msg in st.session_state.messages:
+    if msg["role"] == "assistant":
+        json_data = extract_json(msg["content"])
+        if json_data and st.session_state.result_json is None:
+            st.session_state.result_json = json_data
+            display_text = re.sub(r"```json[\s\S]*?```", "", msg["content"]).strip()
+            if display_text:
                 with st.chat_message("assistant"):
-                    st.markdown(msg["content"])
+                    st.markdown(display_text)
         else:
-            with st.chat_message("user"):
-                st.markdown(msg["content"])
-
-    # If interview is complete (JSON captured), show completion panel
-    if st.session_state.result_json:
-        st.markdown("""
-        <div class="completion-panel">
-            <strong>✅ Assessment complete.</strong> Thank you for your time.
-            Your responses have been recorded and will be shared with Tien-Ti.
-        </div>
-        """, unsafe_allow_html=True)
-
-        # Send email if not yet sent
-        if not st.session_state.email_sent:
-            data = st.session_state.result_json
-            subject = (
-                f"AI Maturity Assessment — {data.get('interview_metadata', {}).get('organisation', org)} — "
-                f"{data.get('interview_metadata', {}).get('participant_name', 'Participant')}"
-            )
-            body = format_results_email(data)
-            sent = send_email(subject, body)
-            st.session_state.email_sent = True
-            if sent:
-                st.success("Results have been sent to Tien-Ti.", icon="📧")
-
-        # Show scores summary
-        dims = st.session_state.result_json.get("dimensions", {})
-        overall = st.session_state.result_json.get("overall_maturity_score", "N/A")
-
-        st.markdown("#### Your maturity profile")
-        dim_labels = {
-            "industry_competitive_risk": "Industry & Competitive Risk",
-            "strategy_leadership_governance": "Strategy, Leadership & Governance",
-            "value_and_roi": "Value & ROI",
-            "skills_and_culture": "Skills & Culture",
-            "data_readiness": "Data Readiness",
-        }
-
-        cols = st.columns([3, 1, 1, 1])
-        cols[0].markdown("**Dimension**")
-        cols[1].markdown("**Initial**")
-        cols[2].markdown("**Final**")
-        cols[3].markdown("**Delta**")
-
-        for key, label in dim_labels.items():
-            d = dims.get(key, {})
-            cols = st.columns([3, 1, 1, 1])
-            cols[0].markdown(label)
-            cols[1].markdown(str(d.get("initial_score", "—")))
-            cols[2].markdown(f"**{d.get('final_score', '—')}**")
-            delta = d.get("score_delta", 0)
-            delta_str = f"+{delta}" if delta > 0 else str(delta)
-            cols[3].markdown(delta_str if delta != 0 else "—")
-
-        st.markdown(f"**Overall maturity score: {overall} / 4.0**")
-
-        st.markdown("&nbsp;")
-        if st.button("Start a new assessment"):
-            for k in list(st.session_state.keys()):
-                del st.session_state[k]
-            st.rerun()
-
-    else:
-        # Chat input — only show if interview not complete
-        user_input = st.chat_input("Type your response here...")
-        if user_input:
-            st.session_state.messages.append({"role": "user", "content": user_input})
-
-            with st.chat_message("user"):
-                st.markdown(user_input)
-
             with st.chat_message("assistant"):
-                with st.spinner(""):
-                    # Build messages list for API (exclude system prompt — that's passed separately)
-                    api_messages = [
-                        {"role": m["role"], "content": m["content"]}
-                        for m in st.session_state.messages
-                        if m["role"] in ("user", "assistant")
-                    ]
-                    response = get_claude_response(api_messages, org)
+                st.markdown(msg["content"])
+    else:
+        with st.chat_message("user"):
+            st.markdown(msg["content"])
 
-                # Check for JSON in response
-                json_data = extract_json(response)
-                if json_data:
-                    st.session_state.result_json = json_data
-                    display_text = re.sub(r"```json[\s\S]*?```", "", response).strip()
-                    if display_text:
-                        st.markdown(display_text)
-                    st.session_state.messages.append({"role": "assistant", "content": response})
-                    st.rerun()
-                else:
-                    st.markdown(response)
-                    st.session_state.messages.append({"role": "assistant", "content": response})
+# ── COMPLETION ────────────────────────────────────────────────────────────────
+if st.session_state.result_json:
+    st.markdown("""
+    <div class="completion-panel">
+        <strong>✅ Assessment complete.</strong> Thank you for your time.
+        Your responses have been recorded and will be shared with Tien-Ti.
+    </div>
+    """, unsafe_allow_html=True)
 
-# ── STAGE: COMPLETE (fallback) ────────────────────────────────────────────────
-elif st.session_state.stage == "complete":
-    st.success("Assessment complete. Thank you.")
-    if st.button("Start a new assessment"):
-        for k in list(st.session_state.keys()):
-            del st.session_state[k]
-        st.rerun()
+    # Send email once
+    if not st.session_state.email_sent:
+        data = st.session_state.result_json
+        subject = (
+            f"AI Maturity Assessment — "
+            f"{data.get('interview_metadata', {}).get('organisation', org)} — "
+            f"{data.get('interview_metadata', {}).get('participant_name', 'Participant')}"
+        )
+        body = format_results_email(data)
+        sent = send_email(subject, body)
+        st.session_state.email_sent = True
+        if sent:
+            st.success("Results have been sent to Tien-Ti.", icon="📧")
+
+    # Scores summary table
+    dims = st.session_state.result_json.get("dimensions", {})
+    overall = st.session_state.result_json.get("overall_maturity_score", "N/A")
+
+    st.markdown("#### Your maturity profile")
+    dim_labels = {
+        "industry_competitive_risk": "Industry & Competitive Risk",
+        "strategy_leadership_governance": "Strategy, Leadership & Governance",
+        "value_and_roi": "Value & ROI",
+        "skills_and_culture": "Skills & Culture",
+        "data_readiness": "Data Readiness",
+    }
+
+    cols = st.columns([3, 1, 1, 1])
+    cols[0].markdown("**Dimension**")
+    cols[1].markdown("**Initial**")
+    cols[2].markdown("**Final**")
+    cols[3].markdown("**Delta**")
+
+    for key, label in dim_labels.items():
+        d = dims.get(key, {})
+        cols = st.columns([3, 1, 1, 1])
+        cols[0].markdown(label)
+        cols[1].markdown(str(d.get("initial_score", "—")))
+        cols[2].markdown(f"**{d.get('final_score', '—')}**")
+        delta = d.get("score_delta", 0)
+        delta_str = f"+{delta}" if delta > 0 else str(delta)
+        cols[3].markdown(delta_str if delta != 0 else "—")
+
+    st.markdown(f"**Overall maturity score: {overall} / 4.0**")
+
+else:
+    # Chat input — active during interview
+    user_input = st.chat_input("Type your response here...")
+    if user_input:
+        st.session_state.messages.append({"role": "user", "content": user_input})
+
+        with st.chat_message("user"):
+            st.markdown(user_input)
+
+        with st.chat_message("assistant"):
+            with st.spinner(""):
+                api_messages = [
+                    {"role": m["role"], "content": m["content"]}
+                    for m in st.session_state.messages
+                    if m["role"] in ("user", "assistant")
+                ]
+                response = get_claude_response(api_messages, org)
+
+            json_data = extract_json(response)
+            if json_data:
+                st.session_state.result_json = json_data
+                display_text = re.sub(r"```json[\s\S]*?```", "", response).strip()
+                if display_text:
+                    st.markdown(display_text)
+                st.session_state.messages.append({"role": "assistant", "content": response})
+                st.rerun()
+            else:
+                st.markdown(response)
+                st.session_state.messages.append({"role": "assistant", "content": response})
