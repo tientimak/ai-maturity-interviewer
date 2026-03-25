@@ -352,10 +352,18 @@ Output the JSON in this exact format:
 def get_claude_response(messages: list, org_name: str) -> str:
     client = anthropic.Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
     system_prompt = SYSTEM_PROMPT_TEMPLATE.replace("{ORGANISATION_NAME}", org_name)
+    # Use prompt caching on the system prompt — saves ~80% of input token cost
+    # since the large system prompt is sent on every turn of the conversation.
     response = client.messages.create(
         model="claude-sonnet-4-5",
         max_tokens=2048,
-        system=system_prompt,
+        system=[
+            {
+                "type": "text",
+                "text": system_prompt,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ],
         messages=messages,
     )
     return response.content[0].text
