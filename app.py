@@ -546,7 +546,10 @@ for msg in st.session_state.messages:
                     st.markdown(display_text)
         else:
             with st.chat_message("assistant"):
-                st.markdown(msg["content"])
+                # Strip any JSON block before rendering to the user
+                display = re.sub(r"```json[\s\S]*?```", "", msg["content"]).strip()
+                if display:
+                    st.markdown(display)
     else:
         with st.chat_message("user"):
             st.markdown(msg["content"])
@@ -604,6 +607,16 @@ if st.session_state.result_json:
         cols[3].markdown(delta_str if delta != 0 else "—")
 
     st.markdown(f"**Overall maturity score: {overall} / 4.0**")
+
+    # Auto-scroll to bottom so participant sees the completion panel
+    import streamlit.components.v1 as components
+    components.html("""
+    <script>
+        var el = window.parent.document.querySelector('section[data-testid="stMain"]');
+        if (!el) el = window.parent.document.querySelector('.main');
+        if (el) el.scrollTop = el.scrollHeight;
+    </script>
+    """, height=0)
 
 else:
     # Chat input — active during interview
