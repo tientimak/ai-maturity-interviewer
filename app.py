@@ -521,18 +521,25 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# Start interview with Claude's opening message if not yet started
-# Double-guard: check both flag AND messages list to prevent re-firing on reruns
+# Show a Begin button until the user explicitly starts — this prevents
+# Streamlit's warmup pings from triggering API calls with no human present.
 if not st.session_state.interview_started and not st.session_state.messages:
-    with st.spinner("Starting your assessment..."):
-        # Anthropic API requires at least one message — use a hidden trigger
-        trigger = [{"role": "user", "content": "__BEGIN__"}]
-        opening = get_claude_response(trigger, org)
-        # Store the trigger + opening so conversation history is coherent
-        st.session_state.messages.append({"role": "user", "content": "__BEGIN__"})
-        st.session_state.messages.append({"role": "assistant", "content": opening})
-        st.session_state.interview_started = True
-        st.rerun()
+    st.markdown(
+        "<p style='text-align:center; color:#666; margin-bottom:1.5rem;'>"
+        "This confidential assessment takes approximately 15–20 minutes. "
+        "There are no right or wrong answers.</p>",
+        unsafe_allow_html=True
+    )
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        if st.button("Begin Assessment →", type="primary", use_container_width=True):
+            with st.spinner("Starting your assessment..."):
+                trigger = [{"role": "user", "content": "__BEGIN__"}]
+                opening = get_claude_response(trigger, org)
+                st.session_state.messages.append({"role": "user", "content": "__BEGIN__"})
+                st.session_state.messages.append({"role": "assistant", "content": opening})
+                st.session_state.interview_started = True
+            st.rerun()
 
 # Render conversation history
 for msg in st.session_state.messages:
