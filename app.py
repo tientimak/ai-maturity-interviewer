@@ -14,11 +14,11 @@ st.set_page_config(
     layout="centered",
 )
 
-# ── Read org name from URL parameter ──────────────────────────────────────────
+# ── Read org name from URL parameter ──────────────────────────────────────────────
 # Usage: share links in the form  https://yourapp.streamlit.app/?org=Acme+Corp
 # If no ?org= param is present, show a clear error rather than a broken interview.
 
-# ── Styling ────────────────────────────────────────────────────────────────────
+# ── Styling ─────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
     /* Hide Streamlit toolbar */
@@ -107,7 +107,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ── System prompt template ─────────────────────────────────────────────────────
+# ── System prompt template ─────────────────────────────────────────────────────────
 SYSTEM_PROMPT_TEMPLATE = """You are an interviewer conducting a structured AI maturity assessment on behalf of Tien-Ti, an independent AI and Innovation advisor. Your role is to have a genuine, conversational interview — not to administer a survey.
 
 Your goal is to assess where the participant's organisation sits across five dimensions of AI maturity, capture their own perspective on that assessment, and record the reasoning behind each score. This data is confidential and will only be used in aggregate analysis.
@@ -352,7 +352,7 @@ Output the JSON in this exact format:
 ```"""
 
 
-# ── Helper: call Claude API ────────────────────────────────────────────────────
+# ── Helper: call Claude API ────────────────────────────────────────────────────────────────
 def get_claude_response(messages: list, org_name: str) -> str:
     client = anthropic.Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
     system_prompt = SYSTEM_PROMPT_TEMPLATE.replace("{ORGANISATION_NAME}", org_name)
@@ -373,7 +373,7 @@ def get_claude_response(messages: list, org_name: str) -> str:
     return response.content[0].text
 
 
-# ── Helper: extract JSON from response ────────────────────────────────────────
+# ── Helper: extract JSON from response ───────────────────────────────────────────────────────────
 def extract_json(text: str) -> dict | None:
     """Extract JSON block from Claude's response."""
     # Try ```json ... ``` block first
@@ -393,7 +393,7 @@ def extract_json(text: str) -> dict | None:
     return None
 
 
-# ── Helper: send email notification ───────────────────────────────────────────
+# ── Helper: send email notification ────────────────────────────────────────────────────────────
 def send_email(subject: str, body: str) -> bool:
     try:
         msg = MIMEMultipart("alternative")
@@ -409,12 +409,18 @@ def send_email(subject: str, body: str) -> bool:
                 msg.as_string(),
             )
         return True
-    except Exception as e:
-        st.warning(f"Email notification failed: {e}")
+    except Exception:
+        contact_email = st.secrets.get("EMAIL_RECIPIENT", "")
+        contact_str = f" at {contact_email}" if contact_email else ""
+        st.warning(
+            f"Something went wrong sending your results automatically. "
+            f"Please contact Tien-Ti{contact_str} to let him know.",
+            icon="⚠️"
+        )
         return False
 
 
-# ── Helper: format results email ──────────────────────────────────────────────
+# ── Helper: format results email ──────────────────────────────────────────────────────────────
 def format_results_email(data: dict) -> str:
     meta = data.get("interview_metadata", {})
     dims = data.get("dimensions", {})
@@ -474,7 +480,7 @@ def format_results_email(data: dict) -> str:
     return "\n".join(lines)
 
 
-# ── Guard: org name must be present ───────────────────────────────────────────
+# ── Guard: org name must be present ─────────────────────────────────────────────────────────
 # Links must include ?org=Organisation+Name
 # If missing, show a friendly error rather than a broken interview.
 params = st.query_params
@@ -494,7 +500,7 @@ if not ORG_NAME:
     )
     st.stop()
 
-# ── Session state initialisation ──────────────────────────────────────────────
+# ── Session state initialisation ──────────────────────────────────────────────────────────────
 def init_state():
     defaults = {
         "messages": [],
@@ -510,7 +516,7 @@ def init_state():
 
 init_state()
 
-# ── INTERVIEW ─────────────────────────────────────────────────────────────────
+# ── INTERVIEW ───────────────────────────────────────────────────────────────────────
 org = ORG_NAME
 
 # Header — shown throughout the interview
@@ -564,7 +570,7 @@ for msg in st.session_state.messages:
         with st.chat_message("user"):
             st.markdown(msg["content"])
 
-# ── COMPLETION ────────────────────────────────────────────────────────────────
+# ── COMPLETION ──────────────────────────────────────────────────────────────────────
 if st.session_state.result_json:
     st.markdown("""
     <div class="completion-panel">
