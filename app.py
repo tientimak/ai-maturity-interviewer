@@ -268,18 +268,25 @@ Move to the next dimension naturally. Do not announce "dimension 3". Use bridgin
 
 TOOL ADOPTION SNAPSHOT
 
-After completing all five dimensions, ask one final question before closing:
+After completing all five dimensions, ask two questions before closing. Ask them one at a time — wait for the participant's response to the first before asking the second.
 
-  "Before we finish — a quick practical question. Which AI tools is {ORGANISATION_NAME} actively using today? For each one, do you have paid licences, and roughly how many people have access? Don't worry if you don't have exact numbers — a ballpark is fine."
+Question 1 — Which tools:
+  "Before we finish — a quick practical question. Which AI tools is {ORGANISATION_NAME} actively using today? Here are the most common ones to prompt you:
 
-Prompt the participant with the most common tools if they need a starting point:
-  - ChatGPT (OpenAI)
-  - Microsoft Copilot (M365)
-  - Gemini (Google)
-  - Claude (Anthropic)
-  - Other (ask them to name it)
+  1. ChatGPT (OpenAI)
+  2. Microsoft Copilot (M365)
+  3. Gemini (Google)
+  4. Claude (Anthropic)
+  5. Other — please name it
 
-Capture what they share in a concise plain-text summary. If they are uncertain about numbers, note that.
+  Feel free to just call out the numbers, or name any others not on the list."
+
+Once they have responded, ask Question 2.
+
+Question 2 — Licence counts:
+  "And for each of those tools — do you have paid licences, and roughly how many people have access? A ballpark is fine if you don't have exact numbers."
+
+Capture both responses in a concise plain-text summary. Note any uncertainty about numbers.
 
 CLOSING
 
@@ -375,7 +382,7 @@ def get_claude_response(messages: list, org_name: str) -> str:
     # Use prompt caching on the system prompt — saves ~80% of input token cost
     # since the large system prompt is sent on every turn of the conversation.
     response = client.messages.create(
-        model="claude-sonnet-4-5",
+        model="claude-sonnet-4-6",
         max_tokens=2048,
         system=[
             {
@@ -452,46 +459,83 @@ def format_results_email(data: dict) -> str:
 
     lines = [
         "AI MATURITY ASSESSMENT — RESULTS",
-        "=" * 50,
-        f"Organisation:  {meta.get('organisation', 'N/A')}",
-        f"Participant:   {meta.get('participant_name', 'N/A')} — {meta.get('participant_role', 'N/A')}",
-        f"Date:          {meta.get('interview_date', 'N/A')}",
-        f"Overall score: {overall} / 4.0",
+        "=" * 60,
         "",
-        "DIMENSION SCORES",
-        "-" * 40,
+        f"Organisation:   {meta.get('organisation', 'N/A')}",
+        f"Participant:    {meta.get('participant_name', 'N/A')} — {meta.get('participant_role', 'N/A')}",
+        f"Date:           {meta.get('interview_date', 'N/A')}",
+        f"Overall score:  {overall} / 4.0",
+        "",
     ]
 
+    # ── Dimension scores table ──
+    lines += [
+        "DIMENSION SCORES",
+        "-" * 60,
+        f"{'Dimension':<35} {'Initial':>7} {'Final':>7} {'Delta':>7}",
+        "-" * 60,
+    ]
     for key, label in dim_labels.items():
         d = dims.get(key, {})
-        lines.append(
-            f"{label}: {d.get('final_score', 'N/A')} "
-            f"(initial {d.get('initial_score', '?')}, "
-            f"delta {d.get('score_delta', '?')})"
-        )
-        lines.append(f"  Rationale: {d.get('rationale', '')}")
-        lines.append(f"  Reliability: {d.get('reliability', '')}")
-        lines.append("")
+        initial = str(d.get('initial_score', '—'))
+        final   = str(d.get('final_score', '—'))
+        delta   = d.get('score_delta', 0)
+        delta_str = f"+{delta}" if isinstance(delta, (int, float)) and delta > 0 else str(delta) if delta != 0 else "—"
+        lines.append(f"{label:<35} {initial:>7} {final:>7} {delta_str:>7}")
+    lines += ["-" * 60, ""]
 
+    # ── Per-dimension detail ──
+    lines.append("DIMENSION DETAIL")
+    lines.append("-" * 60)
+    for key, label in dim_labels.items():
+        d = dims.get(key, {})
+        lines += [
+            "",
+            f"{label.upper()}",
+            f"  Score:       {d.get('final_score', '—')} (initial {d.get('initial_score', '?')}, delta {d.get('score_delta', '?')})",
+            f"  Rationale:   {d.get('rationale', '')}",
+            f"  Reliability: {d.get('reliability', '')}",
+        ]
+        adj = d.get('participant_adjustment', 'none')
+        if adj and adj.lower() != 'none':
+            lines.append(f"  Adjustment:  {adj}")
+    lines.append("")
+
+    # ── Key themes ──
     themes = data.get("key_themes", [])
     if themes:
-        lines.append("KEY THEMES")
-        lines.append("-" * 40)
+        lines += ["KEY THEMES", "-" * 60]
         for t in themes:
-            lines.append(f"• {t}")
+            lines.append(f"  • {t}")
+            lines.append("")
         lines.append("")
 
+    # ── Advisor flags ──
     flags = data.get("advisor_flags", [])
     if flags:
-        lines.append("ADVISOR FLAGS")
-        lines.append("-" * 40)
+        lines += ["ADVISOR FLAGS", "-" * 60]
         for f in flags:
-            lines.append(f"• {f}")
+            lines.append(f"  • {f}")
+            lines.append("")
         lines.append("")
 
-    lines.append("=" * 50)
-    lines.append("RAW JSON")
-    lines.append(json.dumps(data, indent=2))
+    # ── Tool adoption (captured in closing conversation, not in JSON) ──
+    lines += [
+        "OTHER",
+        "-" * 60,
+        "AI Tool Adoption:",
+        "  [See conversation transcript above — tool usage and licence counts",
+        "   captured in the tool adoption snapshot at end of interview.]",
+        "",
+    ]
+
+    # ── Raw JSON ──
+    lines += [
+        "=" * 60,
+        "RAW JSON",
+        "-" * 60,
+        json.dumps(data, indent=2),
+    ]
 
     return "\n".join(lines)
 
@@ -536,10 +580,10 @@ init_state()
 org = ORG_NAME
 
 # Header — shown throughout the interview
+# Note: subtitle line intentionally omitted here as it duplicates the text shown below the button
 st.markdown(f"""
 <div class="assessment-header">
     <h1>🧠 AI Maturity Assessment</h1>
-    <p>Confidential conversation · approx. 15–20 minutes</p>
     <div class="org-badge">📋 {org}</div>
 </div>
 """, unsafe_allow_html=True)
