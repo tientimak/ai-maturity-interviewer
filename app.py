@@ -7,7 +7,7 @@ import re
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -331,61 +331,61 @@ IMPORTANT: After the closing message to the participant, you MUST output a JSON 
 Output the JSON in this exact format:
 
 ```json
-{{
-  "interview_metadata": {{
+{
+  "interview_metadata": {
     "participant_name": "[name or 'Anonymous' if declined]",
     "participant_role": "[role]",
     "organisation": "{ORGANISATION_NAME}",
-    "interview_date": "[today's date in YYYY-MM-DD format]",
+    "interview_date": "{TODAY}",
     "sole_practitioner_flag": false
-  }},
-  "dimensions": {{
-    "industry_competitive_risk": {{
+  },
+  "dimensions": {
+    "industry_competitive_risk": {
       "initial_score": 0,
       "participant_adjustment": "[what they said, or 'none' if agreed]",
       "final_score": 0.0,
       "score_delta": 0.0,
       "rationale": "[2-3 sentences summarising the key evidence]",
       "reliability": "[high / medium / low — and one sentence why]"
-    }},
-    "strategy_leadership_governance": {{
+    },
+    "strategy_leadership_governance": {
       "initial_score": 0,
       "participant_adjustment": "[what they said, or 'none' if agreed]",
       "final_score": 0.0,
       "score_delta": 0.0,
       "rationale": "[2-3 sentences summarising the key evidence]",
       "reliability": "[high / medium / low — and one sentence why]"
-    }},
-    "value_and_roi": {{
+    },
+    "value_and_roi": {
       "initial_score": 0,
       "participant_adjustment": "[what they said, or 'none' if agreed]",
       "final_score": 0.0,
       "score_delta": 0.0,
       "rationale": "[2-3 sentences summarising the key evidence]",
       "reliability": "[high / medium / low — and one sentence why]"
-    }},
-    "skills_and_culture": {{
+    },
+    "skills_and_culture": {
       "initial_score": 0,
       "participant_adjustment": "[what they said, or 'none' if agreed]",
       "final_score": 0.0,
       "score_delta": 0.0,
       "rationale": "[2-3 sentences summarising the key evidence]",
       "reliability": "[high / medium / low — and one sentence why]"
-    }},
-    "data_readiness": {{
+    },
+    "data_readiness": {
       "initial_score": 0,
       "participant_adjustment": "[what they said, or 'none' if agreed]",
       "final_score": 0.0,
       "score_delta": 0.0,
       "rationale": "[2-3 sentences summarising the key evidence]",
       "reliability": "[high / medium / low — and one sentence why]"
-    }}
-  }},
+    }
+  },
   "overall_maturity_score": 0.0,
-  "tool_adoption": {{
+  "tool_adoption": {
     "tools_in_use": ["[each AI tool named, e.g. ChatGPT, Microsoft Copilot, Gemini, Claude, or others]"],
     "licence_summary": "[plain-text summary of paid licence counts per tool, noting any uncertainty, or 'not provided']"
-  }},
+  },
   "key_themes": [
     "[A pattern or tension observed across multiple dimensions]"
   ],
@@ -393,8 +393,17 @@ Output the JSON in this exact format:
     "[Anything requiring follow-up or a caution about score reliability]"
   ],
   "incomplete_dimensions": []
-}}
+}
 ```"""
+
+
+# ── Helper: today's date (Melbourne), so interview_date is real ───────────────
+def _today_str() -> str:
+    try:
+        from zoneinfo import ZoneInfo
+        return datetime.now(ZoneInfo("Australia/Melbourne")).strftime("%Y-%m-%d")
+    except Exception:
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
 # ── Helper: call Claude API ────────────────────────────────────────────────────────────────
@@ -409,7 +418,10 @@ def get_claude_response(messages: list, org_name: str) -> str:
         max_retries=3,
         timeout=120.0,
     )
-    system_prompt = SYSTEM_PROMPT_TEMPLATE.replace("{ORGANISATION_NAME}", org_name)
+    system_prompt = (
+        SYSTEM_PROMPT_TEMPLATE.replace("{ORGANISATION_NAME}", org_name)
+        .replace("{TODAY}", _today_str())
+    )
     # Use prompt caching on the system prompt - the large prompt is sent on every
     # turn of the conversation, so cached reads cut input cost substantially.
     try:
@@ -447,22 +459,34 @@ def get_claude_response(messages: list, org_name: str) -> str:
 
 
 # ── Helper: extract JSON from response ───────────────────────────────────────────────────────────
+def _try_parse(s: str) -> dict | None:
+    candidates = [s]
+    # The model occasionally echoes doubled braces or trailing commas
+    fixed = s.replace("{{", "{").replace("}}", "}")
+    fixed = re.sub(r",(\s*[}\]])", r"\1", fixed)
+    candidates.append(fixed)
+    for c in candidates:
+        try:
+            parsed = json.loads(c)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    return None
+
+
 def extract_json(text: str) -> dict | None:
     """Extract JSON block from Claude's response."""
     # Try ```json ... ``` block first
     match = re.search(r"```json\s*([\s\S]*?)```", text)
     if match:
-        try:
-            return json.loads(match.group(1))
-        except json.JSONDecodeError:
-            pass
+        parsed = _try_parse(match.group(1))
+        if parsed is not None:
+            return parsed
     # Fallback: try to find a raw { ... } block
     match = re.search(r"\{[\s\S]*\}", text)
     if match:
-        try:
-            return json.loads(match.group(0))
-        except json.JSONDecodeError:
-            pass
+        return _try_parse(match.group(0))
     return None
 
 
@@ -814,8 +838,9 @@ else:
             "Please contact Tien-Ti so we can complete your assessment.",
             icon="⏱️",
         )
-    else:
-        # Chat input — only submitting new input sets the pending flag
+    elif st.session_state.interview_started:
+        # Chat input — only after the participant has clicked Begin, and only
+        # submitting new input sets the pending flag
         user_input = st.chat_input("Type your response here...", max_chars=MAX_INPUT_CHARS)
         if user_input:
             st.session_state.messages.append({"role": "user", "content": user_input})
